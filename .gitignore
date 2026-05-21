@@ -1,6 +1,5 @@
 build/
 test_data/
 .vscode/
-sherpa-onnx-v1.13.2-android/
-sherpa-onnx-v1.13.2-osx-arm64-jni/
 Testing/
+ffmpeg-android-maker/
