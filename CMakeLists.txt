@@ -8,7 +8,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Options
 option(FFSUBSYNC_BUILD_TESTS "Build tests" ON)
 option(FFSUBSYNC_BUILD_CLI "Build CLI tool" ON)
-option(FFSUBSYNC_BUILD_ANDROID "Build for Android" OFF)
 
 # FetchContent (used by Kiss FFT fallback and other deps)
 include(FetchContent)
@@ -25,32 +24,89 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(kiss_fft)
 
-# Sherpa ONNX (prebuilt macOS binaries)
-set(SHERPA_ONNX_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/sherpa-onnx-v1.13.2-osx-arm64-jni)
-set(SHERPA_ONNX_LIB_DIR ${SHERPA_ONNX_ROOT}/lib)
+# Sherpa ONNX
+set(SHERPA_ONNX_VERSION "v1.13.2")
+set(SHERPA_ONNX_DESKTOP_URL "https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_ONNX_VERSION}/sherpa-onnx-${SHERPA_ONNX_VERSION}-osx-arm64-jni.tar.bz2")
+set(SHERPA_ONNX_ANDROID_URL "https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_ONNX_VERSION}/sherpa-onnx-${SHERPA_ONNX_VERSION}-android.tar.bz2")
+set(SHERPA_ONNX_CACHE_DIR ${CMAKE_BINARY_DIR}/sherpa-onnx)
 
-add_library(sherpa-onnx-c-api SHARED IMPORTED)
-set_target_properties(sherpa-onnx-c-api PROPERTIES
-    IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libsherpa-onnx-c-api.dylib
-    INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_ROOT}/include
-)
+# Download macOS/desktop tarball (headers are platform-independent, libs used on macOS)
+set(SHERPA_ONNX_DESKTOP_DIR ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-${SHERPA_ONNX_VERSION}-osx-arm64-jni)
+if(NOT EXISTS ${SHERPA_ONNX_DESKTOP_DIR})
+    message(STATUS "Downloading Sherpa ONNX desktop package...")
+    file(MAKE_DIRECTORY ${SHERPA_ONNX_CACHE_DIR})
+    file(DOWNLOAD
+        ${SHERPA_ONNX_DESKTOP_URL}
+        ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-desktop.tar.bz2
+        SHOW_PROGRESS
+    )
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E tar xjf ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-desktop.tar.bz2
+        WORKING_DIRECTORY ${SHERPA_ONNX_CACHE_DIR}
+    )
+    file(REMOVE ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-desktop.tar.bz2)
+endif()
 
-add_library(sherpa-onnx-cxx-api SHARED IMPORTED)
-set_target_properties(sherpa-onnx-cxx-api PROPERTIES
-    IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libsherpa-onnx-cxx-api.dylib
-    INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_ROOT}/include
-    INTERFACE_LINK_LIBRARIES sherpa-onnx-c-api
-)
+set(SHERPA_ONNX_INCLUDE_DIR ${SHERPA_ONNX_DESKTOP_DIR}/include)
 
-add_library(onnxruntime SHARED IMPORTED)
-set_target_properties(onnxruntime PROPERTIES
-    IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libonnxruntime.1.24.4.dylib
-)
+if(ANDROID)
+    # Download Android tarball for per-ABI .so files
+    set(SHERPA_ONNX_ANDROID_DIR ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-${SHERPA_ONNX_VERSION}-android)
+    if(NOT EXISTS ${SHERPA_ONNX_ANDROID_DIR})
+        message(STATUS "Downloading Sherpa ONNX Android package...")
+        file(MAKE_DIRECTORY ${SHERPA_ONNX_CACHE_DIR})
+        file(DOWNLOAD
+            ${SHERPA_ONNX_ANDROID_URL}
+            ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-android.tar.bz2
+            SHOW_PROGRESS
+        )
+        execute_process(
+            COMMAND ${CMAKE_COMMAND} -E tar xjf ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-android.tar.bz2
+            WORKING_DIRECTORY ${SHERPA_ONNX_CACHE_DIR}
+        )
+        file(REMOVE ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-android.tar.bz2)
+    endif()
 
-# Set RPATH so the executable can find dylibs at runtime
-set(CMAKE_BUILD_RPATH ${SHERPA_ONNX_LIB_DIR})
-set(CMAKE_INSTALL_RPATH ${SHERPA_ONNX_LIB_DIR})
-set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+    set(SHERPA_ONNX_LIB_DIR ${SHERPA_ONNX_ANDROID_DIR}/${ANDROID_ABI})
+
+    foreach(lib_name IN ITEMS sherpa-onnx-c-api sherpa-onnx-cxx-api onnxruntime)
+        add_library(${lib_name} SHARED IMPORTED)
+        set_target_properties(${lib_name} PROPERTIES
+            IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/lib${lib_name}.so
+            INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
+        )
+    endforeach()
+
+    message(STATUS "Sherpa ONNX Android: using ${SHERPA_ONNX_LIB_DIR}")
+elseif(APPLE)
+    set(SHERPA_ONNX_LIB_DIR ${SHERPA_ONNX_DESKTOP_DIR}/lib)
+
+    add_library(sherpa-onnx-c-api SHARED IMPORTED)
+    set_target_properties(sherpa-onnx-c-api PROPERTIES
+        IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libsherpa-onnx-c-api.dylib
+        INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
+    )
+
+    add_library(sherpa-onnx-cxx-api SHARED IMPORTED)
+    set_target_properties(sherpa-onnx-cxx-api PROPERTIES
+        IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libsherpa-onnx-cxx-api.dylib
+        INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
+        INTERFACE_LINK_LIBRARIES sherpa-onnx-c-api
+    )
+
+    add_library(onnxruntime SHARED IMPORTED)
+    set_target_properties(onnxruntime PROPERTIES
+        IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libonnxruntime.dylib
+    )
+
+    set(CMAKE_BUILD_RPATH ${SHERPA_ONNX_LIB_DIR})
+    set(CMAKE_INSTALL_RPATH ${SHERPA_ONNX_LIB_DIR})
+    set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+
+    message(STATUS "Sherpa ONNX macOS: using ${SHERPA_ONNX_LIB_DIR}")
+else()
+    message(FATAL_ERROR "Unsupported platform. Only macOS and Android are currently supported for Sherpa ONNX.")
+endif()
 
 # spdlog (FetchContent)
 FetchContent_Declare(
@@ -62,7 +118,7 @@ FetchContent_MakeAvailable(spdlog)
 
 # FFmpeg
 set(FFMPEG_LIBS "")
-if(NOT FFSUBSYNC_BUILD_ANDROID)
+if(NOT ANDROID)
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
         pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET
