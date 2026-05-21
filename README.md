@@ -1,5 +1,7 @@
 # FFsubsync C++
 
+> A ground-up C++ reimplementation of the [ffsubsync](https://github.com/smacke/ffsubsync) Python project, built to run natively on Android and other platforms without a Python runtime.
+
 ## What FFsubsync Does
 
 FFsubsync aligns subtitles to video by:
@@ -9,9 +11,11 @@ FFsubsync aligns subtitles to video by:
 3. **Aligning** the two binary sequences using FFT-based cross-correlation to find the optimal time offset (and optionally framerate ratio)
 4. **Shifting** the subtitles by the computed offset and optionally scaling for framerate mismatches
 
-## Why C++?
+## Why a C++ Reimplementation?
 
-- **Android Integration**: Eliminates Python runtime dependency; native C++ integrates cleanly via JNI
+This project reimplements the [ffsubsync](https://github.com/smacke/ffsubsync) Python tool in C++. The primary motivation is to eliminate the Python runtime dependency so it can be deployed on Android, iOS, embedded systems, and anywhere Python is impractical.
+
+- **Android Integration**: No Python runtime required; native C++ integrates cleanly via JNI
 - **Performance**: FFT and audio processing benefit from native compilation and can leverage SIMD
 - **Distribution**: Single binary/library with no Python environment to manage
 - **Portability**: C++ can target iOS, embedded Linux, and desktop with the same core code
