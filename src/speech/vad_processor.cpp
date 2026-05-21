@@ -33,8 +33,8 @@ VADProcessor::VADProcessor(const std::string& model_path, int sample_rate)
     config.num_threads = 1;
     config.provider = "cpu";
 
-    // Large buffer so we can process arbitrarily long audio in one shot.
-    float buffer_size_in_seconds = 60.0f * 60.0f; // 1 hour
+    // 60 seconds = ~3.8 MB. Sufficient for film/TV without excessive memory.
+    float buffer_size_in_seconds = 60.0f;
 
     impl_->vad = std::make_unique<sherpa_onnx::cxx::VoiceActivityDetector>(
         sherpa_onnx::cxx::VoiceActivityDetector::Create(
@@ -66,6 +66,95 @@ VADProcessor& VADProcessor::operator=(VADProcessor&& other) noexcept {
     return *this;
 }
 
+void VADProcessor::feed(const float* samples, size_t count) {
+    if (!impl_) {
+        throw std::runtime_error("VADProcessor: not initialized");
+    }
+    if (!samples || count == 0) {
+        return;
+    }
+
+    // Feed in chunks. Window size must match the config (512).
+    constexpr int32_t kWindowSize = 512;
+    size_t i = 0;
+    while (i + kWindowSize <= count) {
+        impl_->vad->AcceptWaveform(samples + i, kWindowSize);
+        i += kWindowSize;
+    }
+    // Tail chunk (may be smaller than window size).
+    if (i < count) {
+        impl_->vad->AcceptWaveform(
+            samples + i,
+            static_cast<int32_t>(count - i));
+    }
+}
+
+void VADProcessor::flush() {
+    if (!impl_) {
+        throw std::runtime_error("VADProcessor: not initialized");
+    }
+    impl_->vad->Flush();
+    impl_->flushed = true;
+}
+
+std::vector<SpeechSegment> VADProcessor::drain_segments() {
+    if (!impl_) {
+        throw std::runtime_error("VADProcessor: not initialized");
+    }
+
+    std::vector<SpeechSegment> segments;
+    while (!impl_->vad->IsEmpty()) {
+        auto segment = impl_->vad->Front();
+        SpeechSegment seg;
+        seg.start_sample = static_cast<int>(segment.start);
+        seg.end_sample = static_cast<int>(segment.start + segment.samples.size());
+        segments.push_back(seg);
+        impl_->vad->Pop();
+    }
+    return segments;
+}
+
+std::vector<float> VADProcessor::to_binary_vector(
+    const std::vector<SpeechSegment>& segments,
+    int audio_sample_rate,
+    float output_sample_rate,
+    double total_duration_seconds) {
+
+    if (output_sample_rate <= 0.0f) {
+        throw std::invalid_argument(
+            "VADProcessor: output_sample_rate must be positive");
+    }
+    if (audio_sample_rate <= 0) {
+        throw std::invalid_argument(
+            "VADProcessor: audio_sample_rate must be positive");
+    }
+
+    int num_output_samples =
+        static_cast<int>(std::ceil(total_duration_seconds * output_sample_rate));
+    if (num_output_samples <= 0) {
+        return {};
+    }
+
+    std::vector<float> speech_vector(num_output_samples, 0.0f);
+
+    for (const auto& seg : segments) {
+        double start_time = static_cast<double>(seg.start_sample) / audio_sample_rate;
+        double end_time = static_cast<double>(seg.end_sample) / audio_sample_rate;
+
+        int start_idx = static_cast<int>(std::floor(start_time * output_sample_rate));
+        int end_idx = static_cast<int>(std::ceil(end_time * output_sample_rate));
+
+        if (start_idx < 0) start_idx = 0;
+        if (end_idx > num_output_samples) end_idx = num_output_samples;
+
+        for (int idx = start_idx; idx < end_idx; ++idx) {
+            speech_vector[idx] = 1.0f;
+        }
+    }
+
+    return speech_vector;
+}
+
 std::vector<float> VADProcessor::process(const std::vector<float>& samples,
                                           float output_sample_rate) {
     if (!impl_) {
@@ -77,61 +166,19 @@ std::vector<float> VADProcessor::process(const std::vector<float>& samples,
     }
 
     // Clear any state from a previous run.
-    impl_->vad->Reset();
-    impl_->flushed = false;
+    reset();
 
-    // Feed samples in chunks.  Window size must match the config (512).
-    constexpr int32_t kWindowSize = 512;
-    size_t i = 0;
-    while (i + kWindowSize <= samples.size()) {
-        impl_->vad->AcceptWaveform(samples.data() + i, kWindowSize);
-        i += kWindowSize;
-    }
-    // Tail chunk (may be smaller than window size).
-    if (i < samples.size()) {
-        impl_->vad->AcceptWaveform(
-            samples.data() + i,
-            static_cast<int32_t>(samples.size() - i));
-    }
+    // Feed all samples.
+    feed(samples.data(), samples.size());
 
-    impl_->vad->Flush();
-    impl_->flushed = true;
+    // Flush and drain.
+    flush();
+    auto segments = drain_segments();
 
-    // Build dense binary speech vector.
+    // Convert to binary vector.
     double total_duration =
         static_cast<double>(samples.size()) / impl_->sample_rate;
-    int num_output_samples =
-        static_cast<int>(std::ceil(total_duration * output_sample_rate));
-    if (num_output_samples <= 0) {
-        return {};
-    }
-
-    std::vector<float> speech_vector(num_output_samples, 0.0f);
-
-    while (!impl_->vad->IsEmpty()) {
-        auto segment = impl_->vad->Front();
-        double start_time =
-            static_cast<double>(segment.start) / impl_->sample_rate;
-        double duration =
-            static_cast<double>(segment.samples.size()) / impl_->sample_rate;
-        double end_time = start_time + duration;
-
-        int start_idx =
-            static_cast<int>(std::floor(start_time * output_sample_rate));
-        int end_idx =
-            static_cast<int>(std::ceil(end_time * output_sample_rate));
-
-        if (start_idx < 0) start_idx = 0;
-        if (end_idx > num_output_samples) end_idx = num_output_samples;
-
-        for (int idx = start_idx; idx < end_idx; ++idx) {
-            speech_vector[idx] = 1.0f;
-        }
-
-        impl_->vad->Pop();
-    }
-
-    return speech_vector;
+    return to_binary_vector(segments, impl_->sample_rate, output_sample_rate, total_duration);
 }
 
 void VADProcessor::reset() {

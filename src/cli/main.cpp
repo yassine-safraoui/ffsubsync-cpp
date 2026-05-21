@@ -4,9 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "sherpa-onnx/c-api/cxx-api.h"
-
 #include "ffsubsync/aligner.h"
+#include "ffsubsync/ffmpeg_audio_decoder.h"
 #include "ffsubsync/srt_parser.h"
 #include "ffsubsync/subtitle_speech.h"
 #include "ffsubsync/vad_processor.h"
@@ -18,7 +17,7 @@ int main(int argc, char** argv) {
                              "ffsubsync C++ - Subtitle synchronisation tool");
 
     options.add_options()
-        ("wav", "Reference WAV audio file (16kHz mono)",
+        ("reference", "Reference video/audio file",
          cxxopts::value<std::string>())
         ("subs-dir", "Directory containing SRT subtitle files",
          cxxopts::value<std::string>())
@@ -35,8 +34,8 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-        if (!result.count("wav")) {
-            std::cerr << "Error: --wav is required." << std::endl;
+        if (!result.count("reference")) {
+            std::cerr << "Error: --reference is required." << std::endl;
             return 1;
         }
 
@@ -45,27 +44,36 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        std::string wav_path = result["wav"].as<std::string>();
+        std::string reference_path = result["reference"].as<std::string>();
         std::string subs_dir = result["subs-dir"].as<std::string>();
         std::string model_path = result["model"].as<std::string>();
 
-        // Read WAV using Sherpa ONNX helper.
-        auto wave = sherpa_onnx::cxx::ReadWave(wav_path);
-        if (wave.samples.empty()) {
-            std::cerr << "Error: failed to read WAV file: " << wav_path
-                      << std::endl;
+        // Open reference media with FFmpeg.
+        ffsubsync::FFmpegAudioDecoder decoder;
+        ffsubsync::FFmpegAudioDecoder::Config decoder_config;
+        decoder_config.target_sample_rate = 16000;
+        decoder_config.target_channels = 1;
+        decoder_config.start_seconds = 0.0;
+
+        if (!decoder.open(reference_path, decoder_config)) {
+            std::cerr << "Error: failed to open reference file: " << reference_path
+                      << " (" << decoder.error_message() << ")" << std::endl;
             return 1;
         }
 
-        if (wave.sample_rate != 16000) {
-            std::cerr << "Error: WAV file must be 16kHz mono. Got "
-                      << wave.sample_rate << " Hz." << std::endl;
-            return 1;
+        // Extract audio speech vector at 100 Hz using streaming VAD.
+        ffsubsync::VADProcessor vad(model_path, 16000);
+        ffsubsync::FFmpegAudioDecoder::AudioChunk chunk{};
+
+        while (decoder.next(chunk)) {
+            vad.feed(chunk.data, static_cast<size_t>(chunk.num_samples));
         }
 
-        // Extract audio speech vector at 100 Hz to match subtitle speech.
-        ffsubsync::VADProcessor vad(model_path, wave.sample_rate);
-        std::vector<float> audio_speech = vad.process(wave.samples, 100.0f);
+        vad.flush();
+        auto segments = vad.drain_segments();
+
+        auto audio_speech = ffsubsync::VADProcessor::to_binary_vector(
+            segments, 16000, 100.0f, decoder.info().duration_seconds);
 
         std::cout << "Audio: " << audio_speech.size()
                   << " frames (" << (audio_speech.size() / 100.0)

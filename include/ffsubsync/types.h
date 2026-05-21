@@ -24,6 +24,11 @@ struct SubtitleEntry {
     std::variant<std::monostate, SRTData, ASSData, VTTData> format_data;
 };
 
+struct SpeechSegment {
+    int start_sample = 0;   // sample index at audio_sample_rate
+    int end_sample = 0;     // exclusive
+};
+
 struct AlignmentResult {
     double score = 0.0;
     int offset_samples = 0;
