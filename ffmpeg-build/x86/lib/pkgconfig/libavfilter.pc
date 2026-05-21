@@ -1,0 +1,14 @@
+prefix=/Users/yassine/cloned/ffsubsync-cpp/ffmpeg-android-maker/build/ffmpeg/x86
+exec_prefix=${prefix}
+libdir=/Users/yassine/cloned/ffsubsync-cpp/ffmpeg-android-maker/build/ffmpeg/x86/lib
+includedir=/Users/yassine/cloned/ffsubsync-cpp/ffmpeg-android-maker/build/ffmpeg/x86/include
+
+Name: libavfilter
+Description: FFmpeg audio/video filtering library
+Version: 11.14.100
+Requires: 
+Requires.private: libavutil >= 60.26.100
+Conflicts:
+Libs: -L${libdir}  -lavfilter 
+Libs.private: -pthread -lm -latomic
+Cflags: -I${includedir}

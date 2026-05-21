@@ -1,0 +1,14 @@
+prefix=/Users/yassine/cloned/ffsubsync-cpp/ffmpeg-android-maker/build/ffmpeg/arm64-v8a
+exec_prefix=${prefix}
+libdir=/Users/yassine/cloned/ffsubsync-cpp/ffmpeg-android-maker/build/ffmpeg/arm64-v8a/lib
+includedir=/Users/yassine/cloned/ffsubsync-cpp/ffmpeg-android-maker/build/ffmpeg/arm64-v8a/include
+
+Name: libavutil
+Description: FFmpeg utility library
+Version: 60.26.100
+Requires: 
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavutil 
+Libs.private: -lm -latomic -landroid -lmediandk -pthread
+Cflags: -I${includedir}
