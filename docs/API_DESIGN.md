@@ -288,6 +288,8 @@ namespace ffsubsync {
  * Outputs a binary speech vector at a configurable sample rate:
  *   1.0f = speech detected
  *   0.0f = no speech
+ *
+ * Supports both batch (process) and streaming (feed/flush/drain_segments) APIs.
  */
 class VADProcessor {
 public:
@@ -304,20 +306,30 @@ public:
     /**
      * @brief Process a contiguous block of float PCM mono samples.
      *
-     * Feeds the entire buffer to the VAD, flushes, and converts the resulting
-     * speech segments into a dense binary vector.
-     *
-     * @param samples Float PCM samples (mono).
-     * @param output_sample_rate Desired output sample rate in Hz (default 100).
-     * @return Binary speech vector (1.0 = speech, 0.0 = non-speech).
+     * Convenience wrapper around feed() + flush() + drain_segments() +
+     * to_binary_vector().
      */
-    std::vector<float> process(const std::vector<float>& samples, 
+    std::vector<float> process(const std::vector<float>& samples,
                                 float output_sample_rate = 100.0f);
 
-    /**
-     * @brief Reset the internal VAD state.
-     */
+    // Incremental feed. Can be called with any chunk size.
+    void feed(const float* samples, size_t count);
+
+    // Signal end of stream. Required to finalize the last segment.
+    void flush();
+
+    // Reset all state for a new audio stream.
     void reset();
+
+    // Pop all completed segments from Sherpa's internal queue.
+    std::vector<SpeechSegment> drain_segments();
+
+    // Convert segments to binary speech vector.
+    static std::vector<float> to_binary_vector(
+        const std::vector<SpeechSegment>& segments,
+        int audio_sample_rate,
+        float output_sample_rate,
+        double total_duration_seconds);
 
 private:
     struct Impl;
@@ -330,57 +342,54 @@ private:
 ### Audio Extractor
 
 ```cpp
-// include/ffsubsync/media.h
+// include/ffsubsync/ffmpeg_audio_decoder.h
 namespace ffsubsync {
 
-class AudioExtractor {
+class FFmpegAudioDecoder {
 public:
     struct Config {
         int target_sample_rate = 16000;   // VAD requires 16kHz
-        int channels = 1;
-        std::optional<int> stream_index;  // nullopt = auto-select first audio
+        int target_channels = 1;
+        double start_seconds = 0.0;
     };
 
     struct StreamInfo {
         double duration_seconds = 0.0;
-        int sample_rate = 0;
-        int channels = 0;
+        int original_sample_rate = 0;
+        int original_channels = 0;
         std::string codec_name;
     };
 
-    virtual ~AudioExtractor() = default;
-    
-    virtual StreamInfo probe(const std::filesystem::path& path) = 0;
-    
-    virtual std::vector<int16_t> extract(const std::filesystem::path& path,
-                                          const Config& config,
-                                          double start_seconds = 0.0) = 0;
-    
-    // Chunked extraction for very large files
-    virtual void extract_chunked(const std::filesystem::path& path,
-                                  const Config& config,
-                                  std::function<bool(const int16_t* data, size_t samples)> callback,
-                                  double start_seconds = 0.0) = 0;
-};
+    struct AudioChunk {
+        const float* data = nullptr;      // mono float PCM
+        int num_samples = 0;
+    };
 
-// FFmpeg implementation
-class FFmpegAudioExtractor : public AudioExtractor {
-public:
-    FFmpegAudioExtractor();
-    ~FFmpegAudioExtractor();
-    
-    StreamInfo probe(const std::filesystem::path& path) override;
-    std::vector<int16_t> extract(const std::filesystem::path& path,
-                                  const Config& config,
-                                  double start_seconds = 0.0) override;
-    void extract_chunked(const std::filesystem::path& path,
-                          const Config& config,
-                          std::function<bool(const int16_t* data, size_t samples)> callback,
-                          double start_seconds = 0.0) override;
+    FFmpegAudioDecoder();
+    ~FFmpegAudioDecoder();
 
-private:
-    class Impl;
-    std::unique_ptr<Impl> pimpl_;
+    // Disable copy, enable move
+    FFmpegAudioDecoder(const FFmpegAudioDecoder&) = delete;
+    FFmpegAudioDecoder& operator=(const FFmpegAudioDecoder&) = delete;
+    FFmpegAudioDecoder(FFmpegAudioDecoder&&) noexcept;
+    FFmpegAudioDecoder& operator=(FFmpegAudioDecoder&&) noexcept;
+
+    // Open from filesystem path (desktop)
+    bool open(const std::filesystem::path& path, const Config& config);
+
+    // Open from POSIX file descriptor (Android JNI)
+    bool open(int fd, const Config& config);
+
+    void close();
+
+    // Decode and resample the next chunk.
+    // Returns true with chunk data while audio remains.
+    // Returns false on EOF or fatal error (check error_message()).
+    bool next(AudioChunk& chunk);
+
+    const StreamInfo& info() const;
+    bool is_open() const;
+    std::string error_message() const;
 };
 
 } // namespace ffsubsync

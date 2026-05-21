@@ -26,7 +26,7 @@ This project reimplements the [ffsubsync](https://github.com/smacke/ffsubsync) P
 - **Sherpa ONNX VAD**: Silero VAD via prebuilt macOS binaries
 - **SRT Parser**: Custom lightweight parser with round-trip support
 - **Subtitle Speech Extraction**: Binary vector generation from subtitle timestamps
-- **macOS CLI Tool**: `ffsubsync_cli` accepts `--wav` and `--subs-dir`
+- **macOS CLI Tool**: `ffsubsync_cli` accepts `--reference` (video/audio) and `--subs-dir`
 
 ### Build
 
@@ -39,12 +39,9 @@ ctest --test-dir build --output-on-failure
 ### CLI Usage
 
 ```bash
-# Convert video to 16kHz mono WAV first
-ffmpeg -i input.mp4 -ar 16000 -ac 1 -c:a pcm_s16le output.wav
-
-# Run sync against a directory of SRT files
+# Run sync against a video/audio file and a directory of SRT files
 ./build/ffsubsync_cli \
-  --wav output.wav \
+  --reference input.mp4 \
   --subs-dir /path/to/subtitles/ \
   --model models/silero_vad.onnx
 ```
@@ -108,7 +105,8 @@ ffsubsync-cpp/
 │   ├── aligner.h
 │   ├── srt_parser.h
 │   ├── subtitle_speech.h
-│   └── vad_processor.h
+│   ├── vad_processor.h
+│   └── ffmpeg_audio_decoder.h
 ├── src/
 │   ├── core/pipeline.cpp
 │   ├── aligners/
@@ -118,6 +116,8 @@ ffsubsync-cpp/
 │   ├── speech/
 │   │   ├── subtitle_speech.cpp
 │   │   └── vad_processor.cpp
+│   ├── media/
+│   │   └── ffmpeg_audio_decoder.cpp
 │   ├── subtitles/
 │   │   ├── srt_parser.cpp
 │   │   └── subtitle_transformer.cpp
@@ -145,7 +145,28 @@ ffsubsync-cpp/
 - C++17 compiler (Apple Clang 17+, GCC 11+, MSVC 2022+)
 - macOS: prebuilt Sherpa ONNX binaries included for arm64
 - Linux/Windows: download corresponding Sherpa ONNX release
-- Optional: ffmpeg (for WAV conversion from video)
+- FFmpeg libraries (libavformat, libavcodec, libswresample, libavutil)
+
+### FFmpeg Setup (Required)
+
+FFmpeg is a **system dependency** on desktop. The project links against installed FFmpeg libraries and does not build FFmpeg from source.
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install libavformat-dev libavcodec-dev libswresample-dev libavutil-dev
+```
+
+**Verify:**
+```bash
+pkg-config --exists libavformat && echo "FFmpeg OK"
+```
+
+If `pkg-config` is unavailable, CMake will fall back to searching common library paths (`/opt/homebrew/lib`, `/usr/local/lib`, `/usr/lib`).
 
 ## Project Phases
 

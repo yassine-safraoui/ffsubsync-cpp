@@ -95,15 +95,18 @@ set(CMAKE_INSTALL_RPATH ${SHERPA_ONNX_LIB_DIR})
 
 ## Audio I/O
 
-### Current Approach (Desktop MVP)
-- **ffmpeg CLI**: Convert video/audio to 16kHz mono WAV, then read with Sherpa ONNX's `ReadWave()`
-- Pro: Simple, handles all formats, no libav linkage
-- Con: Requires ffmpeg binary at runtime
+### Desktop (macOS / Linux)
+- **FFmpeg C libraries (libav*)**: `libavformat`, `libavcodec`, `libswresample`, `libavutil`
+- Acquired via system package manager (`brew install ffmpeg`, `apt install libav*-dev`)
+- CMake finds libraries via `pkg-config` with `find_library()` fallback
+- Pro: No subprocess, handles all formats, embedded in library
+- Con: Requires FFmpeg installed as a system dependency
 
-### Future Approach (Android)
-- **FFmpeg C libraries (libav*)**: `libavformat`, `libavcodec`, `libswresample`
-- Pro: No subprocess, embedded in library
-- Con: More code, must handle AVFrame/AVPacket lifecycle
+### Android (Phase 4)
+- **FFmpeg C libraries**: Prebuilt static libraries per ABI using `ffmpeg-android-maker`
+- Libraries committed to `third_party/ffmpeg/android/{abi}/`
+- CMake uses `find_library()` against prebuilt paths when `FFSUBSYNC_BUILD_ANDROID=ON`
+- No runtime dependency on system FFmpeg
 
 ---
 
@@ -191,7 +194,7 @@ auto progress = [](const std::string& stage, double fraction) {
 |----------|---------|---------------|
 | FFT | Kiss FFT | Vendored in `third_party/kiss_fft` |
 | VAD | Sherpa ONNX + Silero VAD | Prebuilt binaries + `silero_vad.onnx` model |
-| Audio I/O | ffmpeg CLI (desktop) / libav* (future Android) | System binary / prebuilt |
+| Audio I/O | FFmpeg C libraries (desktop: system pkg-config, Android: prebuilt static) | System pkg-config / `ffmpeg-android-maker` |
 | SRT Parsing | Custom | In-tree |
 | ASS/SSA Parsing | Custom (Phase 2) | In-tree |
 | Encoding Detection | uchardet (Phase 2) | `master` via FetchContent |

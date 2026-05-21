@@ -384,36 +384,44 @@ SubtitleFile SubtitleScaler::scale(const SubtitleFile& subs, double factor) {
 ### Python Approach
 Spawns `ffmpeg` and `ffprobe` as subprocesses, communicates via stdin/stdout.
 
-### C++ Desktop Approach (ffmpeg CLI)
+### C++ Desktop Approach (FFmpeg C API)
 
-For the desktop MVP, we keep the subprocess approach but use it to convert to standard WAV format:
-
-```bash
-ffmpeg -i input.mp4 -ar 16000 -ac 1 -c:a pcm_s16le output.wav
-```
-
-Then read with Sherpa ONNX's built-in `ReadWave()` helper.
-
-### C++ Future Approach (libav)
+We use `libavformat`, `libavcodec`, `libswresample`, and `libavutil` directly via the FFmpeg C API. FFmpeg is a system dependency on desktop (installed via `brew` or `apt`).
 
 ```cpp
 namespace ffsubsync {
 
-class FFmpegAudioExtractor {
+class FFmpegAudioDecoder {
 public:
-    struct StreamInfo {
-        double duration_seconds;
-        int sample_rate;
-        int channels;
+    struct Config {
+        int target_sample_rate = 16000;
+        int target_channels = 1;
+        double start_seconds = 0.0;
     };
 
-    StreamInfo probe(const std::filesystem::path& path);
-    
-    // Extracts audio as int16_t mono PCM at target_sample_rate
-    std::vector<int16_t> extract(const std::filesystem::path& path,
-                                  int target_sample_rate,
-                                  double start_seconds = 0.0,
-                                  std::optional<int> stream_index = std::nullopt);
+    struct StreamInfo {
+        double duration_seconds = 0.0;
+        int original_sample_rate = 0;
+        int original_channels = 0;
+        std::string codec_name;
+    };
+
+    struct AudioChunk {
+        const float* data = nullptr;   // mono float PCM
+        int num_samples = 0;
+    };
+
+    FFmpegAudioDecoder();
+    ~FFmpegAudioDecoder();
+
+    bool open(const std::filesystem::path& path, const Config& config);
+    bool open(int fd, const Config& config);  // Android JNI
+    void close();
+    bool next(AudioChunk& chunk);
+
+    const StreamInfo& info() const;
+    bool is_open() const;
+    std::string error_message() const;
 };
 
 } // namespace ffsubsync
@@ -421,10 +429,18 @@ public:
 
 **Implementation details**:
 - Open file with `avformat_open_input`
+- Open POSIX fd with custom `AVIOContext` via `avio_alloc_context`
 - Find audio stream with `avformat_find_stream_info`
 - Decode with `avcodec_send_packet` / `avcodec_receive_frame`
-- Resample with `swr_convert` (libswresample)
-- Return raw PCM buffer
+- Resample to 16kHz mono float (`AV_SAMPLE_FMT_FLT`) with `swr_convert`
+- Frame-by-frame iteration via `next()` — no large in-memory buffer
+- RAII wrappers for all FFmpeg objects
+
+### C++ Android Approach (Phase 4)
+
+Android FFmpeg integration uses prebuilt static libraries per ABI from `ffmpeg-android-maker`.
+Libraries are committed to `third_party/ffmpeg/android/{abi}/`.
+CMake uses `find_library()` against these prebuilt paths when `FFSUBSYNC_BUILD_ANDROID=ON`.
 
 ---
 
@@ -469,13 +485,23 @@ int main(int argc, char** argv) {
     // 1. Parse args with cxxopts
     auto args = parse_args(argc, argv);
     
-    // 2. Read reference audio (16kHz mono WAV)
-    auto wave = sherpa_onnx::cxx::ReadWave(args.wav_path);
-    if (wave.sample_rate != 16000) { error; }
+    // 2. Open reference media with FFmpeg (video or audio)
+    FFmpegAudioDecoder decoder;
+    FFmpegAudioDecoder::Config decoder_config;
+    decoder_config.target_sample_rate = 16000;
+    decoder_config.target_channels = 1;
+    if (!decoder.open(args.reference_path, decoder_config)) { error; }
     
-    // 3. Extract audio speech vector
+    // 3. Extract audio speech vector via streaming VAD
     VADProcessor vad(args.model_path, 16000);
-    auto audio_speech = vad.process(wave.samples, 100.0f);
+    FFmpegAudioDecoder::AudioChunk chunk{};
+    while (decoder.next(chunk)) {
+        vad.feed(chunk.data, static_cast<size_t>(chunk.num_samples));
+    }
+    vad.flush();
+    auto segments = vad.drain_segments();
+    auto audio_speech = VADProcessor::to_binary_vector(
+        segments, 16000, 100.0f, decoder.info().duration_seconds);
     
     // 4. For each SRT in subs-dir:
     for (const auto& srt_file : list_srt_files(args.subs_dir)) {

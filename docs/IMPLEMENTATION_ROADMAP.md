@@ -91,8 +91,8 @@ A phased approach to migrating FFsubsync from Python to C++. Each phase has clea
 
 #### 1.7 macOS CLI Tool
 - Implement `ffsubsync_cli` with `cxxopts`
-- Parse `--wav`, `--subs-dir`, `--model` arguments
-- Pipeline: Read WAV -> VAD -> align each SRT -> print offsets
+- Parse `--reference`, `--subs-dir`, `--model` arguments
+- Pipeline: FFmpeg decode + resample -> streaming VAD -> align each SRT -> print offsets
 - Validate against real test data (Copenhagen Test S01E03, La Brea S01E01)
 
 ### Tests
@@ -121,29 +121,32 @@ A phased approach to migrating FFsubsync from Python to C++. Each phase has clea
 
 ---
 
-## Phase 2: Media Pipeline (Week 6-8)
+## Phase 2: Media Pipeline (Week 6-8) 🔄 IN PROGRESS
 
 ### Goals
-- Integrate FFmpeg C API for audio extraction
-- Support arbitrary video/audio input formats
+- Integrate FFmpeg C API for audio extraction (desktop: system libraries via pkg-config)
+- Streaming VAD: decode + resample one frame at a time, feed incrementally to VAD
+- Support arbitrary video/audio input formats on desktop
 - Support encoding detection
 - CLI can sync SRT against video file directly
+- Android FFmpeg integration explicitly deferred to Phase 4 (`ffmpeg-android-maker`)
 
 ### Tasks
 
-#### 2.1 FFmpeg Audio Extractor
-- Implement `FFmpegAudioExtractor` using libavformat/libavcodec/libswresample
-- Implement `probe()` for duration and stream info
-- Implement `extract()` returning `std::vector<int16_t>` mono PCM
-- Implement `extract_chunked()` for large files
-- Handle start time offset (`-ss` equivalent)
-- Handle stream selection (`-map` equivalent)
+#### 2.1 FFmpeg Audio Decoder
+- Implement `FFmpegAudioDecoder` using libavformat/libavcodec/libswresample
+- Open from filesystem path (desktop) or POSIX file descriptor (Android)
+- Decode and resample to 16kHz mono float PCM (`AV_SAMPLE_FMT_FLT`)
+- Frame-by-frame iteration via `next()` — no intermediate large buffer
+- Handle start time offset (`av_seek_frame`)
+- RAII wrappers for `AVFormatContext`, `AVCodecContext`, `SwrContext`, `AVFrame`, `AVPacket`
 
-#### 2.2 Video Speech Transformer
-- Implement `VideoSpeechTransformer`
-- Orchestrate: extract audio -> resample to 16kHz -> VAD -> binary speech vector
-- Handle embedded subtitle streams (try first 5 subtitle streams as fallback)
-- Support progress callbacks during extraction
+#### 2.2 Streaming VAD Processor
+- Redesign `VADProcessor` with streaming API: `feed()`, `flush()`, `drain_segments()`
+- Reduce `buffer_size_in_seconds` from 3600s to 60s (~3.8 MB)
+- Retain `process()` as convenience wrapper calling new primitives
+- Add `to_binary_vector()` utility to convert segments to dense binary vector
+- No intermediate buffer between FFmpeg and VAD: decode one frame → resample → `vad.feed()`
 
 #### 2.3 Encoding Detection
 - Integrate `uchardet` or minimal UTF-8 detection
@@ -162,15 +165,20 @@ A phased approach to migrating FFsubsync from Python to C++. Each phase has clea
 
 ### Tests
 - End-to-end test with sample video and known-offset subtitle
-- Test chunked extraction vs full extraction produce identical results
-- Test encoding detection on non-UTF-8 SRT files
+- VAD streaming parity test (chunked vs batch produces identical binary vector)
+- VAD flush and reset behavior tests
+- FFmpegAudioDecoder unit tests (open, decode, resample, move semantics)
 
 ### Deliverables
-- Desktop CLI `ffsubsync` that matches Python CLI for basic usage
-- Can perform: `ffsubsync video.mp4 -i subs.srt -o synced.srt`
+- Desktop CLI `ffsubsync` that accepts video/audio input directly
+- Streaming VAD with `feed()` / `flush()` / `drain_segments()` API
+- `FFmpegAudioDecoder` with path and fd open support
+- Can perform: `ffsubsync --reference video.mp4 --subs-dir ...`
 
 ### Exit Criteria
-- CLI produces output identical to Python `ffsubsync` for SRT inputs
+- CLI can sync SRT against video file directly without manual WAV conversion
+- VAD streaming parity test passes
+- FFmpeg decoder unit tests pass
 - Integration tests pass on sample data
 
 ---
@@ -238,7 +246,9 @@ A phased approach to migrating FFsubsync from Python to C++. Each phase has clea
 
 #### 4.1 Android Build
 - Configure CMake for Android NDK (ARM64, x86_64)
-- Integrate prebuilt FFmpeg for Android (minimal build)
+- Integrate prebuilt FFmpeg for Android using [`ffmpeg-android-maker`](https://github.com/tanersener/ffmpeg-android-maker) or similar
+- Commit prebuilt static libraries to `third_party/ffmpeg/android/{abi}/`
+- CMake uses `find_library()` against these prebuilt paths when `FFSUBSYNC_BUILD_ANDROID=ON`
 - Integrate Sherpa ONNX Android binaries (AAR or .so)
 - Strip desktop-only features for Android (CLI, progress bars)
 - Optimize memory usage for mobile (chunked processing by default)

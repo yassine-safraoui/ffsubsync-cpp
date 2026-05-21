@@ -190,15 +190,15 @@ Test the CLI against real test data:
 ```bash
 # Copenhagen Test S01E03
 ./ffsubsync_cli \
-  --wav test_data/the.copenhagen.test.s01e03/converted_16k_mono.wav \
+  --reference test_data/the.copenhagen.test.s01e03/converted_16k_mono.wav \
   --subs-dir test_data/the.copenhagen.test.s01e03/subtitles/ \
   --model models/silero_vad.onnx
 
 # Expected: offsets ~0.4s for most subs, near-perfect sync
 
-# La Brea S01E01
+# La Brea S01E01 (can also use video file directly)
 ./ffsubsync_cli \
-  --wav test_data/la.brea.s01e01/converted_16k_mono.wav \
+  --reference test_data/la.brea.s01e01/La.Brea.S01E01.1080p.BluRay.x265-KONTRAST.mp4 \
   --subs-dir test_data/la.brea.s01e01/subtitles/ \
   --model models/silero_vad.onnx
 
