@@ -12,8 +12,15 @@ extern "C" {
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+
+#include <android/log.h>
+
+#define DECODER_LOG_TAG "FFmpegAudioDecoder"
+#define DEC_LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, DECODER_LOG_TAG, __VA_ARGS__)
+#define DEC_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, DECODER_LOG_TAG, __VA_ARGS__)
 
 namespace ffsubsync {
 
@@ -83,6 +90,7 @@ public:
     AVFramePtr frame;
     AVPacketPtr packet;
     AVIOContextPtr avio_ctx;
+    int* fd_ptr = nullptr;  // Owned by Impl; allocated with new when using fd-based open.
 
     int stream_idx = -1;
     FFmpegAudioDecoder::Config config{};
@@ -229,6 +237,37 @@ static int read_packet_callback(void* opaque, uint8_t* buf, int buf_size) {
     return ret;
 }
 
+// Static callback for AVIOContext seek on fd.
+static int64_t seek_callback(void* opaque, int64_t offset, int whence) {
+    int fd = *static_cast<int*>(opaque);
+    switch (whence) {
+        case AVSEEK_SIZE:
+            // Return file size without seeking, or -1 if unknown.
+            // Some Android content:// fds don't support fstat meaningfully.
+            {
+                struct stat st;
+                if (fstat(fd, &st) < 0 || st.st_size == 0) {
+                    return -1;
+                }
+                return static_cast<int64_t>(st.st_size);
+            }
+        case SEEK_SET:
+        case SEEK_CUR:
+        case SEEK_END:
+            {
+                int64_t result = lseek64(fd, offset, whence);
+                if (result < 0) {
+                    DEC_LOGE("seek_callback: lseek64 failed (fd=%d, offset=%lld, whence=%d): %s",
+                             fd, (long long)offset, whence, strerror(errno));
+                    return AVERROR(errno);
+                }
+                return result;
+            }
+        default:
+            return AVERROR(EINVAL);
+    }
+}
+
 FFmpegAudioDecoder::FFmpegAudioDecoder() = default;
 FFmpegAudioDecoder::~FFmpegAudioDecoder() = default;
 
@@ -333,8 +372,26 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
     impl_ = std::make_unique<Impl>();
     impl_->config = config;
 
+    // Seek fd to beginning so FFmpeg can parse headers correctly.
+    off_t seek_result = lseek(fd, 0, SEEK_SET);
+    if (seek_result < 0) {
+        int err = errno;
+        DEC_LOGE("lseek(fd=%d, 0, SEEK_SET) failed: %s", fd, strerror(err));
+        impl_->last_error = std::string("lseek failed: ") + strerror(err);
+        return false;
+    }
+    DEC_LOGD("Opened fd=%d, seeked to position %lld", fd, (long long)seek_result);
+
+    // Log file size for debugging.
+    struct stat st;
+    if (fstat(fd, &st) == 0) {
+        DEC_LOGD("fd=%d file size: %lld bytes", fd, (long long)st.st_size);
+    } else {
+        DEC_LOGE("fd=%d fstat failed: %s", fd, strerror(errno));
+    }
+
     // Allocate buffer for AVIOContext.
-    constexpr int kAvioBufferSize = 4096;
+    constexpr int kAvioBufferSize = 32768;
     unsigned char* avio_buffer = static_cast<unsigned char*>(av_malloc(kAvioBufferSize));
     if (!avio_buffer) {
         impl_->last_error = "Failed to allocate AVIO buffer";
@@ -343,11 +400,13 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
 
     // We store the fd in the Impl so the callback can read it.
     // Use a small helper: store fd in a heap int that we manage.
-    int* fd_ptr = new int(fd);
+    impl_->fd_ptr = new int(fd);
+    int* fd_ptr = impl_->fd_ptr;
     impl_->avio_ctx.reset(avio_alloc_context(
-        avio_buffer, kAvioBufferSize, 0, fd_ptr, read_packet_callback, nullptr, nullptr));
+        avio_buffer, kAvioBufferSize, 0, fd_ptr, read_packet_callback, nullptr, seek_callback));
     if (!impl_->avio_ctx) {
-        delete fd_ptr;
+        delete impl_->fd_ptr;
+        impl_->fd_ptr = nullptr;
         av_freep(&avio_buffer);
         impl_->last_error = "Failed to allocate AVIOContext";
         return false;
@@ -364,9 +423,11 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
     if (ret < 0) {
         char errbuf[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(ret, errbuf, sizeof(errbuf));
+        DEC_LOGE("avformat_open_input (fd=%d) failed: ret=%d (%s)", fd, ret, errbuf);
         impl_->last_error = std::string("avformat_open_input (fd) failed: ") + errbuf;
         return false;
     }
+    DEC_LOGD("avformat_open_input succeeded, format: %s", raw_fmt_ctx->iformat ? raw_fmt_ctx->iformat->name : "unknown");
     impl_->fmt_ctx.reset(raw_fmt_ctx);
 
     ret = avformat_find_stream_info(impl_->fmt_ctx.get(), nullptr);
@@ -448,14 +509,14 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
 
 void FFmpegAudioDecoder::close() {
     if (impl_) {
-        // If we used fd-based open, the avio_ctx destructor frees the buffer
-        // but does NOT close the fd (by design — caller owns it).
         impl_->fmt_ctx.reset();
         impl_->codec_ctx.reset();
         impl_->swr_ctx.reset();
         impl_->frame.reset();
         impl_->packet.reset();
         impl_->avio_ctx.reset();
+        delete impl_->fd_ptr;
+        impl_->fd_ptr = nullptr;
         impl_->open_ = false;
         impl_->pending_samples.clear();
         impl_->pending_offset = 0;
