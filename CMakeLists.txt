@@ -6,8 +6,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Options
-option(FFSUBSYNC_BUILD_TESTS "Build tests" ON)
-option(FFSUBSYNC_BUILD_CLI "Build CLI tool" ON)
+if(ANDROID)
+    option(FFSUBSYNC_BUILD_TESTS "Build tests" OFF)
+    option(FFSUBSYNC_BUILD_CLI "Build CLI tool" OFF)
+else()
+    option(FFSUBSYNC_BUILD_TESTS "Build tests" ON)
+    option(FFSUBSYNC_BUILD_CLI "Build CLI tool" ON)
+endif()
 
 # FetchContent (used by Kiss FFT fallback and other deps)
 include(FetchContent)
@@ -51,7 +56,7 @@ set(SHERPA_ONNX_INCLUDE_DIR ${SHERPA_ONNX_DESKTOP_DIR}/include)
 
 if(ANDROID)
     # Download Android tarball for per-ABI .so files
-    set(SHERPA_ONNX_ANDROID_DIR ${SHERPA_ONNX_CACHE_DIR}/sherpa-onnx-${SHERPA_ONNX_VERSION}-android)
+    set(SHERPA_ONNX_ANDROID_DIR ${SHERPA_ONNX_CACHE_DIR}/jniLibs)
     if(NOT EXISTS ${SHERPA_ONNX_ANDROID_DIR})
         message(STATUS "Downloading Sherpa ONNX Android package...")
         file(MAKE_DIRECTORY ${SHERPA_ONNX_CACHE_DIR})
@@ -69,13 +74,24 @@ if(ANDROID)
 
     set(SHERPA_ONNX_LIB_DIR ${SHERPA_ONNX_ANDROID_DIR}/${ANDROID_ABI})
 
-    foreach(lib_name IN ITEMS sherpa-onnx-c-api sherpa-onnx-cxx-api onnxruntime)
-        add_library(${lib_name} SHARED IMPORTED)
-        set_target_properties(${lib_name} PROPERTIES
-            IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/lib${lib_name}.so
-            INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
-        )
-    endforeach()
+    add_library(sherpa-onnx-c-api SHARED IMPORTED)
+    set_target_properties(sherpa-onnx-c-api PROPERTIES
+        IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libsherpa-onnx-c-api.so
+        INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
+    )
+
+    add_library(sherpa-onnx-cxx-api SHARED IMPORTED)
+    set_target_properties(sherpa-onnx-cxx-api PROPERTIES
+        IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libsherpa-onnx-cxx-api.so
+        INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
+        INTERFACE_LINK_LIBRARIES sherpa-onnx-c-api
+    )
+
+    add_library(onnxruntime SHARED IMPORTED)
+    set_target_properties(onnxruntime PROPERTIES
+        IMPORTED_LOCATION ${SHERPA_ONNX_LIB_DIR}/libonnxruntime.so
+        INTERFACE_INCLUDE_DIRECTORIES ${SHERPA_ONNX_INCLUDE_DIR}
+    )
 
     message(STATUS "Sherpa ONNX Android: using ${SHERPA_ONNX_LIB_DIR}")
 elseif(APPLE)
@@ -265,4 +281,16 @@ if(FFSUBSYNC_BUILD_TESTS)
     include(CTest)
     include(Catch)
     catch_discover_tests(ffsubsync_tests)
+endif()
+
+# Android JNI shared library
+if(ANDROID)
+    add_library(subtitlesync SHARED
+        src/jni/subtitlesync_jni.cpp
+    )
+    target_link_libraries(subtitlesync
+        PRIVATE
+            ffsubsync_core
+            log
+    )
 endif()
