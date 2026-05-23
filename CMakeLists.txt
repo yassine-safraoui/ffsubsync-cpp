@@ -186,26 +186,8 @@ Please install FFmpeg development libraries (e.g., 'brew install ffmpeg' or \
         message(STATUS "FFmpeg found via find_library fallback")
     endif()
 else()
-    # Android: link against prebuilt FFmpeg from ffmpeg-build/
-    set(FFMPEG_ANDROID_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg-build)
-    set(FFMPEG_LIB_DIR ${FFMPEG_ANDROID_ROOT}/${ANDROID_ABI}/lib)
-    set(FFMPEG_INCLUDE_DIR ${FFMPEG_ANDROID_ROOT}/${ANDROID_ABI}/include)
-
-    if(NOT EXISTS ${FFMPEG_LIB_DIR})
-        message(FATAL_ERROR "FFmpeg prebuilt libraries not found for ABI '${ANDROID_ABI}' at ${FFMPEG_LIB_DIR}. \
-Run ffmpeg-android-maker first and copy output to ffmpeg-build/")
-    endif()
-
-    foreach(lib_name IN ITEMS avformat avcodec swresample avutil)
-        add_library(ffmpeg_${lib_name} SHARED IMPORTED)
-        set_target_properties(ffmpeg_${lib_name} PROPERTIES
-            IMPORTED_LOCATION ${FFMPEG_LIB_DIR}/lib${lib_name}.so
-            INTERFACE_INCLUDE_DIRECTORIES ${FFMPEG_INCLUDE_DIR}
-        )
-    endforeach()
-
-    set(FFMPEG_LIBS ffmpeg_avformat ffmpeg_avcodec ffmpeg_swresample ffmpeg_avutil)
-    message(STATUS "Android build: using prebuilt FFmpeg from ${FFMPEG_LIB_DIR}")
+    include(cmake/FFmpegAndroid.cmake)
+    setup_ffmpeg_android()
 endif()
 
 # Core library
