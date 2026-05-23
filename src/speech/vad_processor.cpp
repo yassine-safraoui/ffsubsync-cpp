@@ -1,4 +1,5 @@
 #include "ffsubsync/vad_processor.h"
+#include "ffsubsync/logging.h"
 
 #include "sherpa-onnx/c-api/cxx-api.h"
 
@@ -40,12 +41,14 @@ VADProcessor::VADProcessor(const std::string& model_path, int sample_rate)
         sherpa_onnx::cxx::VoiceActivityDetector::Create(
             config, buffer_size_in_seconds));
     if (!impl_->vad || !impl_->vad->Get()) {
+        spdlog::error("VADProcessor: failed to create Sherpa ONNX VAD instance with model: {}", model_path);
         throw std::runtime_error(
             "VADProcessor: failed to create Sherpa ONNX VAD instance");
     }
 
     impl_->sample_rate = sample_rate;
     impl_->model_path = model_path;
+    spdlog::info("VADProcessor: initialized with sample_rate={}, model={}", sample_rate, model_path);
 }
 
 VADProcessor::~VADProcessor() {

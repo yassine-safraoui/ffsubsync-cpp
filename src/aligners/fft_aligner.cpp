@@ -1,5 +1,6 @@
 #include "ffsubsync/aligner.h"
 #include "ffsubsync/constants.h"
+#include "ffsubsync/logging.h"
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,8 @@ FFTAligner::Result FFTAligner::align(const std::vector<float>& refstring,
     if (refstring.empty() || substring.empty()) {
         return {0, 0.0};
     }
+
+    spdlog::debug("FFTAligner::align ref_len={} sub_len={}", refstring.size(), substring.size());
 
     const size_t ref_len = refstring.size();
     const size_t sub_len  = substring.size();
@@ -136,6 +139,8 @@ void FFTAligner::compute_argmax(const std::vector<std::complex<float>>& convolve
 
     best_offset_ = static_cast<int>(total_length - 1 - best_idx - substring_len);
     best_score_  = static_cast<double>(best_val);
+
+    spdlog::debug("FFTAligner::align result offset={} score={}", best_offset_, best_score_);
 }
 
 } // namespace ffsubsync

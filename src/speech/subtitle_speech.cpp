@@ -1,6 +1,7 @@
 #include "ffsubsync/constants.h"
 #include "ffsubsync/subtitle_speech.h"
 #include "ffsubsync/types.h"
+#include "ffsubsync/logging.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -21,6 +22,9 @@ std::vector<float> SubtitleSpeechTransformer::extract_speech(const std::vector<S
     if (subtitles.empty()) {
         return {};
     }
+
+    spdlog::debug("SubtitleSpeechTransformer::extract_speech: {} subtitles, sample_rate={}",
+                   subtitles.size(), sample_rate_);
 
     double max_time = 0.0;
     for (const auto& sub : subtitles) {

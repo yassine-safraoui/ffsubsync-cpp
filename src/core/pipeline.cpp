@@ -1,7 +1,6 @@
 #include "ffsubsync/types.h"
+#include "ffsubsync/logging.h"
 
 namespace ffsubsync {
-
-// Placeholder for future pipeline implementation.
 
 } // namespace ffsubsync

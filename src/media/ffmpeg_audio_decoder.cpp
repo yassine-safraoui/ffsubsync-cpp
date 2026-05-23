@@ -16,11 +16,7 @@ extern "C" {
 #include <unistd.h>
 #include <vector>
 
-#include <android/log.h>
-
-#define DECODER_LOG_TAG "FFmpegAudioDecoder"
-#define DEC_LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, DECODER_LOG_TAG, __VA_ARGS__)
-#define DEC_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, DECODER_LOG_TAG, __VA_ARGS__)
+#include "ffsubsync/logging.h"
 
 namespace ffsubsync {
 
@@ -257,8 +253,7 @@ static int64_t seek_callback(void* opaque, int64_t offset, int whence) {
             {
                 int64_t result = lseek64(fd, offset, whence);
                 if (result < 0) {
-                    DEC_LOGE("seek_callback: lseek64 failed (fd=%d, offset=%lld, whence=%d): %s",
-                             fd, (long long)offset, whence, strerror(errno));
+spdlog::error("seek_callback: lseek64 failed (fd={}, offset={}, whence={}): {}", fd, static_cast<long long>(offset), whence, strerror(errno));
                     return AVERROR(errno);
                 }
                 return result;
@@ -350,6 +345,12 @@ bool FFmpegAudioDecoder::open(const std::filesystem::path& path, const Config& c
     impl_->stream_info.original_channels = impl_->codec_ctx->ch_layout.nb_channels;
     impl_->stream_info.codec_name = codec->name ? codec->name : "unknown";
 
+    spdlog::info("FFmpegAudioDecoder: opened path '{}' (codec={}, rate={}Hz, channels={}, duration={:.1f}s)",
+                  path.string(), impl_->stream_info.codec_name,
+                  impl_->stream_info.original_sample_rate,
+                  impl_->stream_info.original_channels,
+                  impl_->stream_info.duration_seconds);
+
     if (!impl_->init_resampler(impl_->codec_ctx.get())) {
         return false;
     }
@@ -376,18 +377,18 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
     off_t seek_result = lseek(fd, 0, SEEK_SET);
     if (seek_result < 0) {
         int err = errno;
-        DEC_LOGE("lseek(fd=%d, 0, SEEK_SET) failed: %s", fd, strerror(err));
+        spdlog::error("lseek(fd={}, 0, SEEK_SET) failed: {}", fd, strerror(err));
         impl_->last_error = std::string("lseek failed: ") + strerror(err);
         return false;
     }
-    DEC_LOGD("Opened fd=%d, seeked to position %lld", fd, (long long)seek_result);
+    spdlog::debug("Opened fd={}, seeked to position {}", fd, static_cast<long long>(seek_result));
 
     // Log file size for debugging.
     struct stat st;
     if (fstat(fd, &st) == 0) {
-        DEC_LOGD("fd=%d file size: %lld bytes", fd, (long long)st.st_size);
+        spdlog::debug("fd={} file size: {} bytes", fd, static_cast<long long>(st.st_size));
     } else {
-        DEC_LOGE("fd=%d fstat failed: %s", fd, strerror(errno));
+        spdlog::error("fd={} fstat failed: {}", fd, strerror(errno));
     }
 
     // Allocate buffer for AVIOContext.
@@ -423,11 +424,11 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
     if (ret < 0) {
         char errbuf[AV_ERROR_MAX_STRING_SIZE];
         av_strerror(ret, errbuf, sizeof(errbuf));
-        DEC_LOGE("avformat_open_input (fd=%d) failed: ret=%d (%s)", fd, ret, errbuf);
+        spdlog::error("avformat_open_input (fd={}) failed: ret={} ({})", fd, ret, errbuf);
         impl_->last_error = std::string("avformat_open_input (fd) failed: ") + errbuf;
         return false;
     }
-    DEC_LOGD("avformat_open_input succeeded, format: %s", raw_fmt_ctx->iformat ? raw_fmt_ctx->iformat->name : "unknown");
+    spdlog::debug("avformat_open_input succeeded, format: {}", raw_fmt_ctx->iformat ? raw_fmt_ctx->iformat->name : "unknown");
     impl_->fmt_ctx.reset(raw_fmt_ctx);
 
     ret = avformat_find_stream_info(impl_->fmt_ctx.get(), nullptr);
@@ -490,6 +491,12 @@ bool FFmpegAudioDecoder::open(int fd, const Config& config) {
     impl_->stream_info.original_sample_rate = impl_->codec_ctx->sample_rate;
     impl_->stream_info.original_channels = impl_->codec_ctx->ch_layout.nb_channels;
     impl_->stream_info.codec_name = codec->name ? codec->name : "unknown";
+
+    spdlog::info("FFmpegAudioDecoder: opened fd={} (codec={}, rate={}Hz, channels={}, duration={:.1f}s)",
+                  fd, impl_->stream_info.codec_name,
+                  impl_->stream_info.original_sample_rate,
+                  impl_->stream_info.original_channels,
+                  impl_->stream_info.duration_seconds);
 
     if (!impl_->init_resampler(impl_->codec_ctx.get())) {
         return false;

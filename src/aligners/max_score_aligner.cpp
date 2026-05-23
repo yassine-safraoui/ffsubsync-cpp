@@ -1,5 +1,6 @@
 #include "ffsubsync/aligner.h"
 #include "ffsubsync/types.h"
+#include "ffsubsync/logging.h"
 
 #include <cmath>
 #include <limits>
@@ -47,6 +48,10 @@ AlignmentResult MaxScoreAligner::find_best_alignment(
     if (!best_result.success) {
         best_result.error_message =
             "Failed to find a valid alignment within the allowed offset range";
+        spdlog::warn("MaxScoreAligner: no valid alignment found");
+    } else {
+        spdlog::info("MaxScoreAligner: best alignment offset={}, score={:.4f}, ratio={:.6f}",
+                      best_result.offset_samples, best_result.score, best_result.framerate_ratio);
     }
 
     return best_result;

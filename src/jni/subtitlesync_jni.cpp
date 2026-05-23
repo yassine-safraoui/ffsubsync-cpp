@@ -1,5 +1,4 @@
 #include <jni.h>
-#include <android/log.h>
 #include <unistd.h>
 #include <vector>
 #include <string>
@@ -9,10 +8,7 @@
 #include "ffsubsync/srt_parser.h"
 #include "ffsubsync/subtitle_speech.h"
 #include "ffsubsync/aligner.h"
-
-#define LOG_TAG "SubtitleSyncJNI"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#include "ffsubsync/logging.h"
 
 static void throwJavaException(JNIEnv* env, const char* clazz, const char* msg) {
     jclass exClass = env->FindClass(clazz);
@@ -29,6 +25,8 @@ Java_com_yassine_subtitlesync_SubtitleSync_nativeSyncSubtitles(
     jint videoFd,
     jintArray subtitleFds,
     jstring modelPath) {
+
+    ffsubsync::setup_logging();
 
     if (modelPath == nullptr) {
         throwJavaException(env, "java/lang/IllegalArgumentException", "modelPath is null");
@@ -95,7 +93,7 @@ Java_com_yassine_subtitlesync_SubtitleSync_nativeSyncSubtitles(
         config.target_channels = 1;
 
         if (!decoder.open(static_cast<int>(videoFd), config)) {
-            LOGE("Failed to open video fd: %s", decoder.error_message().c_str());
+            spdlog::error("Failed to open video fd: {}", decoder.error_message());
             jobjectArray emptyArray = env->NewObjectArray(0, syncResultClass, nullptr);
             env->DeleteLocalRef(syncResultClass);
             fdGuard.close_all();
@@ -169,7 +167,7 @@ Java_com_yassine_subtitlesync_SubtitleSync_nativeSyncSubtitles(
         return resultArray;
 
     } catch (const std::exception& e) {
-        LOGE("Exception in nativeSyncSubtitles: %s", e.what());
+        spdlog::error("Exception in nativeSyncSubtitles: {}", e.what());
         throwJavaException(env, "java/lang/RuntimeException", e.what());
         env->DeleteLocalRef(syncResultClass);
         fdGuard.close_all();

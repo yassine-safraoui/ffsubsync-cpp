@@ -124,13 +124,13 @@ else()
     message(FATAL_ERROR "Unsupported platform. Only macOS and Android are currently supported for Sherpa ONNX.")
 endif()
 
-# # spdlog (FetchContent)
-# FetchContent_Declare(
-#     spdlog
-#     GIT_REPOSITORY https://github.com/gabime/spdlog.git
-#     GIT_TAG v1.12.0
-# )
-# FetchContent_MakeAvailable(spdlog)
+# spdlog (FetchContent)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.12.0
+)
+FetchContent_MakeAvailable(spdlog)
 
 # FFmpeg
 set(FFMPEG_LIBS "")
@@ -232,7 +232,7 @@ target_link_libraries(ffsubsync_core
         kissfft::kissfft
         sherpa-onnx-cxx-api
         onnxruntime
-        # spdlog::spdlog
+        spdlog::spdlog
         ${FFMPEG_LIBS}
 )
 

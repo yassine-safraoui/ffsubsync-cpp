@@ -1,6 +1,7 @@
 #include "ffsubsync/constants.h"
 #include "ffsubsync/srt_parser.h"
 #include "ffsubsync/types.h"
+#include "ffsubsync/logging.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -29,6 +30,8 @@ std::vector<SubtitleEntry> SRTParser::parse_string(const std::string& content) {
     std::vector<SubtitleEntry> entries;
     std::vector<std::string> blocks = split_blocks(content);
 
+    spdlog::debug("SRTParser::parse_string: {} blocks found", blocks.size());
+
     for (const auto& block : blocks) {
         if (block.empty()) {
             continue;
@@ -39,6 +42,8 @@ std::vector<SubtitleEntry> SRTParser::parse_string(const std::string& content) {
             entries.push_back(*entry);
         }
     }
+
+    spdlog::debug("SRTParser::parse_string: {} entries parsed", entries.size());
 
     return entries;
 }
